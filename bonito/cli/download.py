@@ -111,6 +111,10 @@ def main(args):
         for train in training:
             File(__models__, train, args.force).download()
 
+    if args.ctc:
+        print("[downloading dna_r9.4.1 CTC model]")
+        File(__models__, r9_models[1], args.force).download()
+
 
 def argparser():
     parser = ArgumentParser(
@@ -123,4 +127,5 @@ def argparser():
     group.add_argument('--training', action='store_true')
     parser.add_argument('-f', '--force', action='store_true')
     parser.add_argument('--latest', action='store_true')
+    parser.add_argument('--ctc', action='store_true')
     return parser

@@ -20,7 +20,7 @@ class Read:
 
         self.read_id = read.read_id
         self.filename = filename.name
-        self.run_id = read.get_run_id().decode()
+        self.run_id = read.get_run_id()
 
         read_attrs = read.handle[read.raw_dataset_group_name].attrs
         channel_info = read.handle[read.global_key + 'channel_id'].attrs
