@@ -32,7 +32,7 @@ def main(args):
             limit=args.chunks, directory=directory
         )
     )
-    dataloader = DataLoader(testdata, batch_size=args.batchsize)
+    dataloader = DataLoader(testdata, batch_size=args.batchsize, pin_memory=True)
     accuracy_with_cov = lambda ref, seq: accuracy(ref, seq, min_coverage=args.min_coverage)
 
     for w in [int(i) for i in args.weights.split(',')]:
@@ -62,12 +62,40 @@ def main(args):
         duration = time.perf_counter() - t0
 
         refs = [decode_ref(target, model.alphabet) for target in dataloader.dataset.targets]
-        accuracies = [accuracy_with_cov(ref, seq) if len(seq) else 0. for ref, seq in zip(refs, seqs)]
+
+        accuracies = []
+        insertions = []
+        deletions = []
+        substitutions = []
+        len_seq_evals = []
+        mean_seq_length = 0
+
+        with open('bonito_eval.txt', 'w') as bonito_eval:
+            for ref, seq in zip(refs, seqs):
+                bonito_eval.write("%s\n%s\n" % (ref, seq))
+                if len(seq):
+                    acc, insertion, deletion, substitution, len_seq_eval = accuracy_with_cov(ref, seq)
+                    accuracies.append(acc)
+                    if acc != 0.0:
+                        insertions.append(insertion)
+                        deletions.append(deletion)
+                        substitutions.append(substitution)
+                        len_seq_evals.append(len_seq_eval)
+                    mean_seq_length += len(ref)
+                else:
+                    accuracies.append(0.)
+                    mean_seq_length += len(ref)
+        mean_seq_length /= len(refs)
 
         if args.poa: poas.append(sequences)
 
         print("* mean      %.2f%%" % np.mean(accuracies))
         print("* median    %.2f%%" % np.median(accuracies))
+        print("* mean ins  %.2f%%" % np.mean(insertions))
+        print("* mean dels %.2f%%" % np.mean(deletions))
+        print("* mean subs %.2f%%" % np.mean(substitutions))
+        print("* seq eval  %.2f%%" % np.mean(len_seq_evals))
+        print("* mean len  %.2f" % mean_seq_length)
         print("* time      %.2f" % duration)
         print("* samples/s %.2E" % (args.chunks * data.shape[2] / duration))
 

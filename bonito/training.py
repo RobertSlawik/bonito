@@ -202,9 +202,9 @@ def train(model, device, train_loader, optimizer, use_amp=False, criterion=None,
 
             if use_amp:
                 with amp.scale_loss(losses['loss'], optimizer) as scaled_loss:
-                    scaled_loss.backward()
+                    scaled_loss.backward(retain_graph=True)
             else:
-                losses['loss'].backward()
+                losses['loss'].backward(retain_graph=True)
 
             params = amp.master_params(optimizer) if use_amp else model.parameters()
             grad_norm = torch.nn.utils.clip_grad_norm_(params, max_norm=max_norm).item()
@@ -253,7 +253,7 @@ def test(model, device, test_loader, min_coverage=0.5, criterion=None):
         decode_ref(target, model.alphabet) for target in test_loader.dataset.targets
     ]
     accuracies = [
-        accuracy_with_cov(ref, seq) if len(seq) else 0. for ref, seq in zip(refs, seqs)
+        accuracy_with_cov(ref, seq)[0] if len(seq) else 0. for ref, seq in zip(refs, seqs)
     ]
 
     mean = np.mean(accuracies)

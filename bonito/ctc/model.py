@@ -6,6 +6,7 @@ import numpy as np
 from bonito.nn import Permute, activations
 from torch.nn.functional import log_softmax
 from torch.nn import Module, ModuleList, Sequential, Conv1d, BatchNorm1d, Dropout
+from itertools import chain
 
 from fast_ctc_decode import beam_search, viterbi_search
 
@@ -44,6 +45,17 @@ class Model(Module):
             seq, path = beam_search(x, self.alphabet, beamsize, threshold)
         if return_path: return seq, path
         return seq
+
+    def get_parameters_to_prune(self):
+        return chain(self.encoder.named_modules(), self.decoder.named_modules())
+
+    def flatten_params(self):
+        # TODO
+        pass
+
+    def prep_for_save(self):
+        # TODO
+        pass
 
 
 class Encoder(Module):

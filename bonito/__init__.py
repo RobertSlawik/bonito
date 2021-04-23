@@ -1,7 +1,7 @@
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
-from bonito.cli import basecaller, evaluate, view, convert, download, pair
-modules = ['basecaller', 'pair', 'evaluate', 'view', 'convert', 'download']
+from bonito.cli import basecaller, evaluate, view, convert, download, pair, compress
+modules = ['basecaller', 'pair', 'evaluate', 'view', 'convert', 'download', 'compress']
 
 try:
     from bonito.cli import train, tune
@@ -15,7 +15,7 @@ __version__ = '0.3.5'
 
 def main():
     parser = ArgumentParser(
-        'bonito', 
+        'bonito',
         formatter_class=ArgumentDefaultsHelpFormatter
     )
 

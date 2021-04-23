@@ -222,7 +222,7 @@ def load_data(limit=None, directory=None):
     lengths = np.load(os.path.join(directory, "reference_lengths.npy"), mmap_mode='r')
 
     indices = os.path.join(directory, "indices.npy")
-    
+
     if os.path.exists(indices):
         idx = np.load(indices, mmap_mode='r')
         if limit:
@@ -279,6 +279,8 @@ def load_model(dirname, device, weights=None, half=None, chunksize=0):
     device = torch.device(device)
     config = toml.load(os.path.join(dirname, 'config.toml'))
     weights = os.path.join(dirname, 'weights_%s.tar' % weights)
+
+    print("Loading weights from %s" % weights)
 
     Model = load_symbol(config, "Model")
     model = Model(config)
@@ -346,16 +348,25 @@ def accuracy(ref, seq, balanced=False, min_coverage=0.0):
     r_coverage = len(alignment.traceback.ref) / len(ref)
 
     if r_coverage < min_coverage:
-        return 0.0
+        return 0.0, 0, 0, 0, 0
 
     for count, op  in re.findall(split_cigar, cigar):
         counts[op] += int(count)
 
     if balanced:
         accuracy = (counts['='] - counts['I']) / (counts['='] + counts['X'] + counts['D'])
+        insertions = counts['I'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
+        deletions = counts['D'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
+        substitutions = counts['X'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
     else:
         accuracy = counts['='] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
-    return accuracy * 100
+        insertions = counts['I'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
+        deletions = counts['D'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
+        substitutions = counts['X'] / (counts['='] + counts['I'] + counts['X'] + counts['D'])
+
+    len_seq_eval = (counts['='] + counts['X'] + counts['D']) / len(ref)
+
+    return accuracy * 100, insertions * 100, deletions * 100, substitutions * 100, len_seq_eval * 100
 
 
 def print_alignment(ref, seq):

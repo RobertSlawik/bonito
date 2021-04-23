@@ -123,6 +123,19 @@ class RNNWrapper(Module):
                 x.requires_grad = False
                 x.zero_()
 
+    def get_parameters_to_prune(self):
+        parameters_to_prune = []
+        for param, _ in self.rnn.named_parameters():
+            if "weight" in param:
+                parameters_to_prune.append((self.rnn, param))
+        return parameters_to_prune
+
+    def flatten_params(self):
+        self.rnn.flatten_parameters()
+
+    def prep_for_save(self):
+        self.rnn._apply(lambda x: x)
+
 
 def gru(*args, **kwargs):
     return RNNWrapper(GRU, *args, **kwargs)

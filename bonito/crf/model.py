@@ -4,7 +4,7 @@ Bonito CTC-CRF Model.
 
 import torch
 import numpy as np
-from bonito.nn import Permute, Scale, activations, rnns
+from bonito.nn import Permute, Scale, activations, rnns, RNNWrapper
 from torch.nn import Sequential, Module, Linear, Tanh, Conv1d
 
 import seqdist.sparse
@@ -72,6 +72,30 @@ class Model(SeqdistModel):
         )
         super().__init__(encoder, seqdist)
         self.config = config
+
+    def get_parameters_to_prune(self):
+        parameters_to_prune = []
+        modules = self.encoder.named_modules()
+        for _name, module in modules:
+            if isinstance(module, Linear):
+                parameters_to_prune.append((module, "weight"))
+            if isinstance(module, RNNWrapper):
+                parameters_to_prune.extend(module.get_parameters_to_prune())
+        return parameters_to_prune
+
+    def flatten_params(self):
+        self.encoder._modules['7'].flatten_params()
+        self.encoder._modules['8'].flatten_params()
+        self.encoder._modules['9'].flatten_params()
+        self.encoder._modules['10'].flatten_params()
+        self.encoder._modules['11'].flatten_params()
+
+    def prep_for_save(self):
+        self.encoder._modules['7'].prep_for_save()
+        self.encoder._modules['8'].prep_for_save()
+        self.encoder._modules['9'].prep_for_save()
+        self.encoder._modules['10'].prep_for_save()
+        self.encoder._modules['11'].prep_for_save()
 
 
 def conv(c_in, c_out, ks, stride=1, bias=False, dilation=1, groups=1):

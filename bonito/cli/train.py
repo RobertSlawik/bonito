@@ -36,6 +36,8 @@ def main(args):
     train_data = load_data(limit=args.chunks, directory=args.directory)
     if os.path.exists(os.path.join(args.directory, 'validation')):
         valid_data = load_data(directory=os.path.join(args.directory, 'validation'))
+        split = np.floor(len(train_data[0]) * 0.1).astype(np.int32)
+        train_data = [x[:split] for x in train_data]
     else:
         print("[validation set not found: splitting training set]")
         split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
@@ -71,6 +73,7 @@ def main(args):
         warmup_steps=500, start_step=last_epoch*len(train_loader)
     )
 
+
     if args.multi_gpu:
         from torch.nn import DataParallel
         model = DataParallel(model)
@@ -82,6 +85,11 @@ def main(args):
     else:
         criterion = None
 
+
+    val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
+    print("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+
+
     for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
 
         try:
@@ -91,7 +99,7 @@ def main(args):
                     use_amp=args.amp, lr_scheduler=lr_scheduler,
                     loss_log = loss_log
                 )
-    
+
             model_state = model.state_dict() if not args.multi_gpu else model.module.state_dict()
             torch.save(model_state, os.path.join(workdir, "weights_%s.tar" % epoch))
 
