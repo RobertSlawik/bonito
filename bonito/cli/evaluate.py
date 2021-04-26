@@ -35,7 +35,7 @@ def main(args):
     dataloader = DataLoader(testdata, batch_size=args.batchsize, pin_memory=True)
     accuracy_with_cov = lambda ref, seq: accuracy(ref, seq, min_coverage=args.min_coverage)
 
-    for w in [int(i) for i in args.weights.split(',')]:
+    for w in args.weights.split(','):
 
         seqs = []
 
@@ -89,15 +89,15 @@ def main(args):
 
         if args.poa: poas.append(sequences)
 
-        print("* mean      %.2f%%" % np.mean(accuracies))
-        print("* median    %.2f%%" % np.median(accuracies))
-        print("* mean ins  %.2f%%" % np.mean(insertions))
-        print("* mean dels %.2f%%" % np.mean(deletions))
-        print("* mean subs %.2f%%" % np.mean(substitutions))
-        print("* seq eval  %.2f%%" % np.mean(len_seq_evals))
-        print("* mean len  %.2f" % mean_seq_length)
-        print("* time      %.2f" % duration)
-        print("* samples/s %.2E" % (args.chunks * data.shape[2] / duration))
+        print("* mean      %.3f%%" % np.mean(accuracies))
+        print("* median    %.3f%%" % np.median(accuracies))
+        print("* mean ins  %.3f%%" % np.mean(insertions))
+        print("* mean dels %.3f%%" % np.mean(deletions))
+        print("* mean subs %.3f%%" % np.mean(substitutions))
+        print("* seq eval  %.3f%%" % np.mean(len_seq_evals))
+        print("* mean len  %.3f" % mean_seq_length)
+        print("* time      %.3f" % duration)
+        print("* samples/s %.3E" % (args.chunks * data.shape[2] / duration))
 
     if args.poa:
 
@@ -122,7 +122,7 @@ def argparser():
     parser.add_argument("model_directory")
     parser.add_argument("--directory", default=None)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed", default=9, type=int)
+    parser.add_argument("--seed", default=25, type=int)
     parser.add_argument("--weights", default="0", type=str)
     parser.add_argument("--chunks", default=1000, type=int)
     parser.add_argument("--batchsize", default=96, type=int)

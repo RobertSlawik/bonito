@@ -256,6 +256,8 @@ def match_names(state_dict, model):
         (k, s) for s, i, k in sorted([(v.shape, i, k)
         for i, (k, v) in enumerate(state_dict.items())])
     ])
+    # Filter out mask
+    state_dict = {k: v for k, v in state_dict.items() if not "mask" in k}
     k1, s1 = keys_and_shapes(state_dict)
     k2, s2 = keys_and_shapes(model.state_dict())
     assert s1 == s2
@@ -287,6 +289,10 @@ def load_model(dirname, device, weights=None, half=None, chunksize=0):
 
     state_dict = torch.load(weights, map_location=device)
     state_dict = {k2: state_dict[k1] for k1, k2 in match_names(state_dict, model).items()}
+
+    if "sparse" in weights:
+        state_dict = sparse_to_dense(state_dict)
+
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
         name = k.replace('module.', '')
@@ -301,6 +307,10 @@ def load_model(dirname, device, weights=None, half=None, chunksize=0):
     model.eval()
     model.to(device)
     return model
+
+
+def sparse_to_dense(state_dict):
+    return {k: v.to_dense() if v.layout == torch.sparse_coo else v for k, v in state_dict.items()}
 
 
 def parasail_to_sam(result, seq):
