@@ -11,12 +11,17 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 from bonito.training import ChunkDataSet
 from bonito.util import accuracy, poa, decode_ref, half_supported
-from bonito.util import init, load_data, load_model, concat, permute
+from bonito.util import init, load_data, load_model, concat, permute, get_parameters_count
 
 from torch.utils.data import DataLoader
 
+import warnings
+
 
 def main(args):
+
+    # TODO(jasminequah)
+    warnings.filterwarnings("ignore", message="RNN module weights are not part of single contiguous chunk of memory. This means they need to be compacted at every call, possibly greatly increasing memory usage. To compact weights again call flatten_parameters().")
 
     poas = []
     init(args.seed, args.device)
@@ -41,6 +46,7 @@ def main(args):
 
         print("* loading model", w)
         model = load_model(args.model_directory, args.device, weights=w)
+        params_count = get_parameters_count(model)
 
         print("* calling")
         t0 = time.perf_counter()
@@ -98,6 +104,7 @@ def main(args):
         print("* mean len  %.3f" % mean_seq_length)
         print("* time      %.3f" % duration)
         print("* samples/s %.3E" % (args.chunks * data.shape[2] / duration))
+        print("* # params  %s" % params_count) # Number of non-zero parameters to measure model sparsity
 
     if args.poa:
 

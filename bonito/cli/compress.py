@@ -12,7 +12,7 @@ from collections import OrderedDict
 from argparse import ArgumentParser
 from argparse import ArgumentDefaultsHelpFormatter
 
-from bonito.util import load_data, load_model, load_symbol, init, default_config, default_data
+from bonito.util import load_data, load_model, load_symbol, init, default_config, default_data, get_parameters_count
 from bonito.training import ChunkDataSet, load_state, train, test, func_scheduler, cosine_decay_schedule, CSVLogger
 
 import toml
@@ -69,7 +69,7 @@ def main(args):
     # Loading pretrained model
     assert(args.pretrained) # Can only compress pretrained model
     print("[using pretrained model {}]".format(args.pretrained))
-    model = load_model(args.pretrained, device, half=False)
+    model = load_model(args.pretrained, device, half=False, weights=args.weights)
     # Resuming state TODO(jasminequah): is this needed
     optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
     last_epoch = load_state(workdir, args.device, model, optimizer, use_amp=args.amp)
@@ -164,18 +164,6 @@ def main(args):
         torch.save(model_state, os.path.join(workdir, "weights_final_sparse.tar"))
 
 
-def get_parameters_count(model):
-    params_count = 0
-    masks = dict(model.named_buffers())
-    for name, param in model.named_parameters():
-        if name.replace("orig", "mask") in masks:
-            # Use mask to measure # parameters
-            params_count += torch.sum(masks[name.replace("orig", "mask")] != 0).item()
-        elif param is not None:
-            params_count += torch.sum(param != 0).item()
-    return params_count
-
-
 def argparser():
     parser = ArgumentParser(
         formatter_class=ArgumentDefaultsHelpFormatter,
@@ -194,6 +182,7 @@ def argparser():
     parser.add_argument("--amp", action="store_true", default=False)
     parser.add_argument("-f", "--force", action="store_true", default=False)
     parser.add_argument("--pretrained", default="dna_r9.4.1@v3.2")
+    parser.add_argument("--weights") # Suffix of weights file to use
     parser.add_argument("--prune_level", default=0.6, type=float)
     parser.add_argument("--pruning_iterations", default=1, type=int)
     parser.add_argument("--finetune", action="store_true", default=False)
