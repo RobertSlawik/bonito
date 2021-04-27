@@ -17,6 +17,7 @@ import torch
 import parasail
 import numpy as np
 from torch.cuda import get_device_capability
+import torch.nn.utils.prune as prune
 
 try:
     from claragenomics.bindings import cuda
@@ -251,13 +252,28 @@ def load_symbol(config, symbol):
     return getattr(imported, symbol)
 
 
+def get_module_by_name(model, param_name):
+    # param_name consists of module name followed by param name eg: encoder.11.rnn.weight_hh_l0
+    module_name = param_name[:param_name.rindex('.')]
+    modules = module_name.split(".")
+    module = model
+    for m in modules:
+        module = module._modules[m]
+    return module
+
+
 def match_names(state_dict, model):
     keys_and_shapes = lambda state_dict: zip(*[
         (k, s) for s, i, k in sorted([(v.shape, i, k)
         for i, (k, v) in enumerate(state_dict.items())])
     ])
-    # Filter out mask
-    state_dict = {k: v for k, v in state_dict.items() if not "mask" in k}
+
+    # Handle loading models with pruning parameterisation
+    for k, v in state_dict.items():
+        if "mask" in k:
+            module = get_module_by_name(model, k)
+            prune.identity(module, k[k.rindex('.')+1:].replace('_mask', ''))
+
     k1, s1 = keys_and_shapes(state_dict)
     k2, s2 = keys_and_shapes(model.state_dict())
     assert s1 == s2
