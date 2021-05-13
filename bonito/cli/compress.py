@@ -105,7 +105,7 @@ def main(args):
             val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
             print("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
             with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                accuracy_log.write("[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
+                accuracy_log.write("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
 
             for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
                 try:
@@ -129,7 +129,7 @@ def main(args):
                 ))
 
                 with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                    accuracy_log.write("[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+                    accuracy_log.write("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
                         pruning_iter, epoch, workdir, val_loss, val_mean, val_median
                     ))
 
@@ -147,21 +147,21 @@ def main(args):
 
             torch.save(model.state_dict(), os.path.join(workdir, "weights_prune_%s.tar" % pruning_iter))
 
-        # Making pruned parameterisation permanent
-        for module, param in parameters_to_prune:
-            prune.remove(module, param)
+    # Making pruned parameterisation permanent
+    for module, param in parameters_to_prune:
+        prune.remove(module, param)
 
-        # prep_for_save() follows this: https://github.com/pytorch/pytorch/issues/33618
-        model.prep_for_save()
+    # prep_for_save() follows this: https://github.com/pytorch/pytorch/issues/33618
+    model.prep_for_save()
 
-        torch.save(model.state_dict(), os.path.join(workdir, "weights_final.tar"))
-        print("After pruning, model has %d params\n" % get_parameters_count(model))
+    torch.save(model.state_dict(), os.path.join(workdir, "weights_final.tar"))
+    print("After pruning, model has %d params\n" % get_parameters_count(model))
 
-        # Sparsifying
-        model_state = model.state_dict()
-        for param_tensor in model_state:
-            model_state[param_tensor] = model_state[param_tensor].to_sparse()
-        torch.save(model_state, os.path.join(workdir, "weights_final_sparse.tar"))
+    # Sparsifying
+    model_state = model.state_dict()
+    for param_tensor in model_state:
+        model_state[param_tensor] = model_state[param_tensor].to_sparse()
+    torch.save(model_state, os.path.join(workdir, "weights_final_sparse.tar"))
 
 
 def argparser():
