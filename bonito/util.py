@@ -441,3 +441,20 @@ def get_parameters_count(model):
         elif param is not None:
             params_count += torch.sum(param != 0).item()
     return params_count
+
+
+def measure_layer_sparsity(model):
+    layer_sparsity = dict()
+    masks = dict(model.named_buffers())
+    for name, param in model.named_parameters():
+        if name.replace("orig", "mask") in masks:
+            # Use mask to measure sparsity
+            sparsity = 100. * float(torch.sum(masks[name.replace("orig", "mask")] == 0)) / float(param.nelement())
+            print("Sparsity in {}: {:.2f}%".format(name, sparsity))
+            layer_sparsity[name.replace("orig", "mask")] = sparsity
+        elif param is not None:
+            sparsity = 100. * float(torch.sum(param == 0)) / float(param.nelement())
+            print("Sparsity in {}: {:.2f}%".format(name, sparsity))
+            print(param.size())
+            layer_sparsity[name] = sparsity
+    return layer_sparsity
