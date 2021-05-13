@@ -87,7 +87,11 @@ def main(args):
         parameters_to_prune = model.get_parameters_to_prune()
         pruning_amount = 1 - (1 - args.prune_level) ** pruning_iter
         print("Pruning amount: %.3f" % pruning_amount)
-        prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=pruning_amount)
+        if args.structured:
+            for module, param in parameters_to_prune:
+                prune.ln_structured(module, param, amount=pruning_amount, n=1, dim=0)
+        else:
+            prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=pruning_amount)
 
         print("After pruning, model has %d params\n" % get_parameters_count(model))
 
@@ -184,6 +188,7 @@ def argparser():
     parser.add_argument("--pretrained", default="dna_r9.4.1@v3.2")
     parser.add_argument("--weights") # Suffix of weights file to use
     parser.add_argument("--prune_level", default=0.6, type=float)
+    parser.add_argument("--structured", action="store_true", default=False)
     parser.add_argument("--pruning_iterations", default=1, type=int)
     parser.add_argument("--finetune", action="store_true", default=False)
     return parser
