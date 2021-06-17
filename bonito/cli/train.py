@@ -21,7 +21,13 @@ import numpy as np
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
+import warnings
+
+
 def main(args):
+
+    # TODO(jasminequah)
+    warnings.filterwarnings("ignore", message="RNN module weights are not part of single contiguous chunk of memory. This means they need to be compacted at every call, possibly greatly increasing memory usage. To compact weights again call flatten_parameters().")
 
     workdir = os.path.expanduser(args.training_directory)
 
@@ -35,9 +41,9 @@ def main(args):
     print("[loading data]")
     train_data = load_data(limit=args.chunks, directory=args.directory)
     if os.path.exists(os.path.join(args.directory, 'validation')):
-        valid_data = load_data(directory=os.path.join(args.directory, 'validation'))
-        split = np.floor(len(train_data[0]) * 0.1).astype(np.int32)
+        split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
         train_data = [x[:split] for x in train_data]
+        valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
     else:
         print("[validation set not found: splitting training set]")
         split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
@@ -60,13 +66,17 @@ def main(args):
 
     print("[loading model]")
     if args.pretrained:
+        assert(args.weights is not None)
         print("[using pretrained model {}]".format(args.pretrained))
-        model = load_model(args.pretrained, device, half=False)
+        model = load_model(args.pretrained, device, half=False, weights=args.weights)
+        # We load from a specified weights file if using pretrained model instead of relying on load_state
+        last_epoch = 0
     else:
         model = load_symbol(config, 'Model')(config)
-    optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
+        model.to(device)
+        last_epoch = load_state(workdir, args.device, model, optimizer, use_amp=args.amp)
 
-    last_epoch = load_state(workdir, args.device, model, optimizer, use_amp=args.amp)
+    optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
 
     lr_scheduler = func_scheduler(
         optimizer, cosine_decay_schedule(1.0, 0.1), args.epochs * len(train_loader),
@@ -87,8 +97,7 @@ def main(args):
 
 
     val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-    print("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-
+    print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
 
     for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
 
@@ -109,7 +118,7 @@ def main(args):
         except KeyboardInterrupt:
             break
 
-        print("[epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+        print("\n[epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
             epoch, workdir, val_loss, val_mean, val_median
         ))
 
@@ -133,13 +142,15 @@ def argparser():
     parser.add_argument("--config", default=default_config)
     parser.add_argument("--directory", default=default_data)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--lr", default=2e-3, type=float)
+    parser.add_argument("--lr", default=5e-4, type=float)
     parser.add_argument("--seed", default=25, type=int)
     parser.add_argument("--epochs", default=5, type=int)
     parser.add_argument("--batch", default=64, type=int)
     parser.add_argument("--chunks", default=0, type=int)
+    parser.add_argument("--val_chunks", default=1000, type=int)
     parser.add_argument("--amp", action="store_true", default=False)
     parser.add_argument("--multi-gpu", action="store_true", default=False)
     parser.add_argument("-f", "--force", action="store_true", default=False)
     parser.add_argument("--pretrained", default="")
+    parser.add_argument("--weights", default="0", type=str) # Suffix of weights file to use
     return parser
