@@ -43,19 +43,18 @@ def main(args):
 
     # Loading training & validation data
     print("[loading data]")
-    if args.finetune:
-        train_data = load_data(limit=args.chunks, directory=args.directory)
-        # split = np.floor(len(train_data[0]) * 0.005).astype(np.int32) # Training on 1/200 of training set
-        # train_data = [x[:split] for x in train_data]
-        train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
+    train_data = load_data(limit=args.chunks, directory=args.directory)
     if os.path.exists(os.path.join(args.directory, 'validation')):
+        split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
+        train_data = [x[:split] for x in train_data]
         valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
-        valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
-    # else:
-    #     print("[validation set not found: splitting training set]")
-    #     split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
-    #     valid_data = [x[split:] for x in train_data]
-    #     train_data = [x[:split] for x in train_data]
+    else:
+        print("[validation set not found: splitting training set]")
+        split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
+        valid_data = [x[split:] for x in train_data]
+        train_data = [x[:split] for x in train_data]
+    train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
+    valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
 
 
     # Writing config file to workdir
@@ -70,9 +69,7 @@ def main(args):
     assert(args.pretrained) # Can only compress pretrained model
     print("[using pretrained model {}]".format(args.pretrained))
     model = load_model(args.pretrained, device, half=False, weights=args.weights)
-    # Resuming state TODO(jasminequah): is this needed
     optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
-    last_epoch = load_state(workdir, args.device, model, optimizer, use_amp=args.amp)
     torch.save(model.state_dict(), os.path.join(workdir, "weights.orig.tar"))
     criterion = model.seqdist.ctc_loss if hasattr(model, 'seqdist') else None
 
@@ -89,67 +86,62 @@ def main(args):
         print("Pruning amount: %.3f" % pruning_amount)
         if args.structured:
             for module, param in parameters_to_prune:
-                prune.ln_structured(module, param, amount=pruning_amount, n=1, dim=0)
+                prune.ln_structured(module, param, amount=args.prune_level, n=1, dim=0)
         else:
-            prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=pruning_amount)
+            prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=args.prune_level)
 
         print("After pruning, model has %d params\n" % get_parameters_count(model))
 
-        # model.flatten_params()
-        # val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-        # print("[pruned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+        # Finetuning pruned model between iterations
+        lr_scheduler = func_scheduler(
+            optimizer, cosine_decay_schedule(1.0, 0.1), args.epochs * len(train_loader),
+            warmup_steps=500, start_step=last_epoch*len(train_loader)
+        )
 
-        # Finetuning pruned model
-        if args.finetune:
-            lr_scheduler = func_scheduler(
-                optimizer, cosine_decay_schedule(1.0, 0.1), args.epochs * len(train_loader),
-                warmup_steps=500, start_step=last_epoch*len(train_loader)
-            )
+        val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
+        print("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
+        with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
+            accuracy_log.write("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
 
-            val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-            print("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
-            with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                accuracy_log.write("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
-
-            for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
-                try:
-                    with CSVLogger(os.path.join(workdir, 'losses_{}.csv'.format(epoch))) as loss_log:
-                        train_loss, duration = train(
-                            model, device, train_loader, optimizer, criterion=criterion,
-                            use_amp=args.amp, lr_scheduler=lr_scheduler,
-                            loss_log = loss_log
-                        )
-
-                    torch.save(model.state_dict(), os.path.join(workdir, "weights_%s_%s.tar" % (pruning_iter, epoch)))
-
-                    val_loss, val_mean, val_median = test(
-                        model, device, valid_loader, criterion=criterion
+        for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
+            try:
+                with CSVLogger(os.path.join(workdir, 'losses_{}.csv'.format(epoch))) as loss_log:
+                    train_loss, duration = train(
+                        model, device, train_loader, optimizer, criterion=criterion,
+                        use_amp=args.amp, lr_scheduler=lr_scheduler,
+                        loss_log = loss_log
                     )
-                except KeyboardInterrupt:
-                    break
 
-                print("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+                torch.save(model.state_dict(), os.path.join(workdir, "weights_%s_%s.tar" % (pruning_iter, epoch)))
+
+                val_loss, val_mean, val_median = test(
+                    model, device, valid_loader, criterion=criterion
+                )
+            except KeyboardInterrupt:
+                break
+
+            print("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+                pruning_iter, epoch, workdir, val_loss, val_mean, val_median
+            ))
+
+            with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
+                accuracy_log.write("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
                     pruning_iter, epoch, workdir, val_loss, val_mean, val_median
                 ))
 
-                with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                    accuracy_log.write("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
-                        pruning_iter, epoch, workdir, val_loss, val_mean, val_median
-                    ))
+            with CSVLogger(os.path.join(workdir, 'training.csv')) as training_log:
+                training_log.append(OrderedDict([
+                    ('time', datetime.today()),
+                    ('duration', int(duration)),
+                    ('pruning_iter', pruning_iter),
+                    ('epoch', epoch),
+                    ('train_loss', train_loss),
+                    ('validation_loss', val_loss),
+                    ('validation_mean', val_mean),
+                    ('validation_median', val_median)
+                ]))
 
-                with CSVLogger(os.path.join(workdir, 'training.csv')) as training_log:
-                    training_log.append(OrderedDict([
-                        ('time', datetime.today()),
-                        ('duration', int(duration)),
-                        ('pruning_iter', pruning_iter),
-                        ('epoch', epoch),
-                        ('train_loss', train_loss),
-                        ('validation_loss', val_loss),
-                        ('validation_mean', val_mean),
-                        ('validation_median', val_median)
-                    ]))
-
-            torch.save(model.state_dict(), os.path.join(workdir, "weights_prune_%s.tar" % pruning_iter))
+        torch.save(model.state_dict(), os.path.join(workdir, "weights_prune_%s.tar" % pruning_iter))
 
     # Making pruned parameterisation permanent
     for module, param in parameters_to_prune:
@@ -186,9 +178,8 @@ def argparser():
     parser.add_argument("--amp", action="store_true", default=False)
     parser.add_argument("-f", "--force", action="store_true", default=False)
     parser.add_argument("--pretrained", default="dna_r9.4.1@v3.2")
-    parser.add_argument("--weights") # Suffix of weights file to use
+    parser.add_argument("--weights", default="0",type=str) # Suffix of weights file to use
     parser.add_argument("--prune_level", default=0.6, type=float)
     parser.add_argument("--structured", action="store_true", default=False)
     parser.add_argument("--pruning_iterations", default=1, type=int)
-    parser.add_argument("--finetune", action="store_true", default=False)
     return parser
