@@ -300,7 +300,7 @@ def load_model(dirname, device, weights=None, half=None, chunksize=0):
     config = toml.load(os.path.join(dirname, 'config.toml'))
     weights = os.path.join(dirname, 'weights_%s.tar' % weights)
 
-    print("Loading weights from %s" % weights)
+    sys.stderr.write("> loading weights from %s\n" % weights)
 
     Model = load_symbol(config, "Model")
     model = Model(config)
