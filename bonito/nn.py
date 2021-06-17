@@ -125,9 +125,8 @@ class RNNWrapper(Module):
 
     def get_parameters_to_prune(self):
         parameters_to_prune = []
-        for param, _ in self.rnn.named_parameters():
-            if "weight" in param:
-                parameters_to_prune.append((self.rnn, param))
+        parameters_to_prune.append((self.rnn, 'weight_ih_l0'))
+        parameters_to_prune.append((self.rnn, 'weight_hh_l0'))
         return parameters_to_prune
 
     def flatten_params(self):
