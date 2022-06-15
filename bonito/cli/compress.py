@@ -19,11 +19,20 @@ import toml
 import torch
 import numpy as np
 import torch.nn.utils.prune as prune
+import torch.quantization as quantization
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from torch.nn import LSTM
+from torch.nn import LSTM, Linear
 
 import warnings
+
+def print_size_of_model(model, label=""):
+    torch.save(model.state_dict(), "temp.p")
+    size=os.path.getsize("temp.p")
+    print("model: ",label,' \t','Size (KB):', size/1e3)
+    os.remove('temp.p')
+    return size
+
 
 def main(args):
 
@@ -42,19 +51,7 @@ def main(args):
     warnings.filterwarnings("ignore", message="RNN module weights are not part of single contiguous chunk of memory. This means they need to be compacted at every call, possibly greatly increasing memory usage. To compact weights again call flatten_parameters().")
 
     # Loading training & validation data
-    print("[loading data]")
-    train_data = load_data(limit=args.chunks, directory=args.directory)
-    if os.path.exists(os.path.join(args.directory, 'validation')):
-        split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
-        train_data = [x[:split] for x in train_data]
-        valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
-    else:
-        print("[validation set not found: splitting training set]")
-        split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
-        valid_data = [x[split:] for x in train_data]
-        train_data = [x[:split] for x in train_data]
-    train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
-    valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
+
 
 
     # Writing config file to workdir
@@ -65,22 +62,95 @@ def main(args):
         chunk_config = toml.load(os.path.join(chunk_config_file))
     toml.dump({**config, **argsdict, **chunk_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
 
-    # Loading pretrained model
-    assert(args.pretrained) # Can only compress pretrained model
-    print("[using pretrained model {}]".format(args.pretrained))
-    model = load_model(args.pretrained, device, half=False, weights=args.weights)
-    optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
-    torch.save(model.state_dict(), os.path.join(workdir, "weights.orig.tar"))
-    criterion = model.seqdist.ctc_loss if hasattr(model, 'seqdist') else None
-
-    val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-    print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-    with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
-        accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+    
 
     if args.quantize:
+        # QUANTISATION (currently can only run on CPU (see torch documentation))
+
+        device = torch.device('cpu')
+
+
+        # Loading pretrained model
+        assert(args.pretrained) # Can only compress pretrained model
+        print("[using pretrained model {}]".format(args.pretrained))
+        model = load_model(args.pretrained, device, half=False, weights=args.weights)
+        optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
+        torch.save(model.state_dict(), os.path.join(workdir, "weights.orig.tar"))
+        criterion = model.seqdist.ctc_loss if hasattr(model, 'seqdist') else None
+
         print("[Quantizing]")
+        print('Here is the floating point version of this module:')
+        print(model)
+        print('')
+        quantized_lstm = quantization.quantize_dynamic(model, {LSTM, Linear}, dtype=torch.qint8)
+        print('and now the quantized version:')
+        print(quantized_lstm)
+
+        # compare the sizes
+        f=print_size_of_model(model,"fp32")
+        q=print_size_of_model(quantized_lstm,"int8")
+        print("{0:.2f} times smaller".format(f/q))
+
+        # Loading data
+        train_data = load_data(limit=args.chunks, directory=args.directory)
+        if os.path.exists(os.path.join(args.directory, 'validation')):
+            split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
+            train_data = [x[:split] for x in train_data]
+            valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
+        else:
+            print("[validation set not found: splitting training set]")
+            split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
+            valid_data = [x[split:] for x in train_data]
+            train_data = [x[:split] for x in train_data]
+        train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
+        valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
+
+
+
+
+        val_loss, val_mean, val_median = test(quantized_lstm, torch.device('cuda'), valid_loader, criterion=criterion)
+        print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+        with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
+            accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+
+        torch.save(quantized_lstm.state_dict(), os.path.join(workdir, "quantized_weights_final.tar"))
+
+
+
     else: 
+        # PRUNING
+         # Loading training & validation data
+
+        print("[loading data]")
+        train_data = load_data(limit=args.chunks, directory=args.directory)
+        if os.path.exists(os.path.join(args.directory, 'validation')):
+            split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
+            train_data = [x[:split] for x in train_data]
+            valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
+        else:
+            print("[validation set not found: splitting training set]")
+            split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
+            valid_data = [x[split:] for x in train_data]
+            train_data = [x[:split] for x in train_data]
+        train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
+        valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
+
+        # Loading pretrained model
+        assert(args.pretrained) # Can only compress pretrained model
+        print("[using pretrained model {}]".format(args.pretrained))
+        model = load_model(args.pretrained, device, half=False, weights=args.weights)
+        optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
+        torch.save(model.state_dict(), os.path.join(workdir, "weights.orig.tar"))
+        criterion = model.seqdist.ctc_loss if hasattr(model, 'seqdist') else None
+
+        val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
+        print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+        with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
+            accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+
+
+
+
         print("[Pruning]")   
         for pruning_iter in range(1, args.pruning_iterations + 1):
             # Pruning
