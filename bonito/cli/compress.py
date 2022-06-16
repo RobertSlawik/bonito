@@ -91,27 +91,6 @@ def main(args):
         q=print_size_of_model(quantized_lstm,"int8")
         print("{0:.2f} times smaller".format(f/q))
 
-        # Loading data
-        train_data = load_data(limit=args.chunks, directory=args.directory)
-        if os.path.exists(os.path.join(args.directory, 'validation')):
-            split = np.floor(len(train_data[0]) * 0.25).astype(np.int32)
-            train_data = [x[:split] for x in train_data]
-            valid_data = load_data(limit=args.val_chunks, directory=os.path.join(args.directory, 'validation'))
-        else:
-            print("[validation set not found: splitting training set]")
-            split = np.floor(len(train_data[0]) * 0.97).astype(np.int32)
-            valid_data = [x[split:] for x in train_data]
-            train_data = [x[:split] for x in train_data]
-        train_loader = DataLoader(ChunkDataSet(*train_data), batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
-        valid_loader = DataLoader(ChunkDataSet(*valid_data), batch_size=args.batch, num_workers=4, pin_memory=True)
-
-
-
-
-        val_loss, val_mean, val_median = test(quantized_lstm, torch.device('cuda'), valid_loader, criterion=criterion)
-        print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-        with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
-            accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
 
         torch.save(quantized_lstm.state_dict(), os.path.join(workdir, "quantized_weights_final.tar"))
 
@@ -147,7 +126,6 @@ def main(args):
         print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
         with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
             accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-
 
 
 
