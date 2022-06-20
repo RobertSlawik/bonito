@@ -20,6 +20,7 @@ import torch
 import numpy as np
 import torch.nn.utils.prune as prune
 import torch.quantization as quantization
+import torchprof
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.nn import LSTM, Linear
@@ -121,95 +122,104 @@ def main(args):
         optimizer = AdamW(model.parameters(), amsgrad=False, lr=args.lr)
         torch.save(model.state_dict(), os.path.join(workdir, "weights.orig.tar"))
         criterion = model.seqdist.ctc_loss if hasattr(model, 'seqdist') else None
-
-        val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-        print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-        with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
-            accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
-
-
-
-        print("[Pruning]")   
-        for pruning_iter in range(1, args.pruning_iterations + 1):
-            # Pruning
-            print("Before pruning, model has %d params\n" % get_parameters_count(model))
-            parameters_to_prune = model.get_parameters_to_prune()
-            pruning_amount = 1 - (1 - args.prune_level) ** pruning_iter
-            print("Pruning amount: %.3f" % pruning_amount)
-            if args.structured:
-                for module, param in parameters_to_prune:
-                    prune.ln_structured(module, param, amount=args.prune_level, n=1, dim=0)
-            else:
-                prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=args.prune_level)
-
-            print("After pruning, model has %d params\n" % get_parameters_count(model))
-
-            # Finetuning pruned model between iterations
-            lr_scheduler = func_scheduler(
-                optimizer, cosine_decay_schedule(1.0, 0.1), args.epochs * len(train_loader),
-                warmup_steps=500, start_step=last_epoch*len(train_loader)
-            )
-
+        
+        if args.profile:
+            with torchprof.Profile(model, use_cuda=True, profile_memory=False) as prof:
+                test(model, device, valid_loader, criterion=criterion)
+            
+            print(prof.display(show_events=False))
+            
+        else:
             val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
-            print("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
-            with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                accuracy_log.write("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
+            print("\n[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
+            with open(os.path.join(workdir, 'accuracy.txt'), 'w') as accuracy_log:
+                accuracy_log.write("[start] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(workdir, val_loss, val_mean, val_median))
 
-            for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
-                try:
-                    with CSVLogger(os.path.join(workdir, 'losses_{}.csv'.format(epoch))) as loss_log:
-                        train_loss, duration = train(
-                            model, device, train_loader, optimizer, criterion=criterion,
-                            use_amp=args.amp, lr_scheduler=lr_scheduler,
-                            loss_log = loss_log
-                        )
 
-                    torch.save(model.state_dict(), os.path.join(workdir, "weights_%s_%s.tar" % (pruning_iter, epoch)))
 
-                    val_loss, val_mean, val_median = test(
-                        model, device, valid_loader, criterion=criterion
-                    )
-                except KeyboardInterrupt:
-                    break
+            print("[Pruning]")   
+            for pruning_iter in range(1, args.pruning_iterations + 1):
+                # Pruning
+                print("Before pruning, model has %d params\n" % get_parameters_count(model))
+                parameters_to_prune = model.get_parameters_to_prune()
+                pruning_amount = 1 - (1 - args.prune_level) ** pruning_iter
+                print("Pruning amount: %.3f" % pruning_amount)
+                if args.structured:
+                    for module, param in parameters_to_prune:
+                        prune.ln_structured(module, param, amount=args.prune_level, n=1, dim=0)
+                else:
+                    prune.global_unstructured(parameters_to_prune, pruning_method=prune.L1Unstructured, amount=args.prune_level)
 
-                print("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
-                    pruning_iter, epoch, workdir, val_loss, val_mean, val_median
-                ))
+                print("After pruning, model has %d params\n" % get_parameters_count(model))
 
+                # Finetuning pruned model between iterations
+                lr_scheduler = func_scheduler(
+                    optimizer, cosine_decay_schedule(1.0, 0.1), args.epochs * len(train_loader),
+                    warmup_steps=500, start_step=last_epoch*len(train_loader)
+                )
+
+                val_loss, val_mean, val_median = test(model, device, valid_loader, criterion=criterion)
+                print("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
                 with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
-                    accuracy_log.write("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+                    accuracy_log.write("\n[prune {}] [untuned] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(pruning_iter, workdir, val_loss, val_mean, val_median))
+
+                for epoch in range(1 + last_epoch, args.epochs + 1 + last_epoch):
+                    try:
+                        with CSVLogger(os.path.join(workdir, 'losses_{}.csv'.format(epoch))) as loss_log:
+                            train_loss, duration = train(
+                                model, device, train_loader, optimizer, criterion=criterion,
+                                use_amp=args.amp, lr_scheduler=lr_scheduler,
+                                loss_log = loss_log
+                            )
+
+                        torch.save(model.state_dict(), os.path.join(workdir, "weights_%s_%s.tar" % (pruning_iter, epoch)))
+
+                        val_loss, val_mean, val_median = test(
+                            model, device, valid_loader, criterion=criterion
+                        )
+                    except KeyboardInterrupt:
+                        break
+
+                    print("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
                         pruning_iter, epoch, workdir, val_loss, val_mean, val_median
                     ))
 
-                with CSVLogger(os.path.join(workdir, 'training.csv')) as training_log:
-                    training_log.append(OrderedDict([
-                        ('time', datetime.today()),
-                        ('duration', int(duration)),
-                        ('pruning_iter', pruning_iter),
-                        ('epoch', epoch),
-                        ('train_loss', train_loss),
-                        ('validation_loss', val_loss),
-                        ('validation_mean', val_mean),
-                        ('validation_median', val_median)
-                    ]))
+                    with open(os.path.join(workdir, 'accuracy.txt'), 'a') as accuracy_log:
+                        accuracy_log.write("\n[prune {}] [epoch {}] directory={} loss={:.4f} mean_acc={:.3f}% median_acc={:.3f}%".format(
+                            pruning_iter, epoch, workdir, val_loss, val_mean, val_median
+                        ))
 
-            torch.save(model.state_dict(), os.path.join(workdir, "weights_prune_%s.tar" % pruning_iter))
+                    with CSVLogger(os.path.join(workdir, 'training.csv')) as training_log:
+                        training_log.append(OrderedDict([
+                            ('time', datetime.today()),
+                            ('duration', int(duration)),
+                            ('pruning_iter', pruning_iter),
+                            ('epoch', epoch),
+                            ('train_loss', train_loss),
+                            ('validation_loss', val_loss),
+                            ('validation_mean', val_mean),
+                            ('validation_median', val_median)
+                        ]))
 
-        # Making pruned parameterisation permanent
-        for module, param in parameters_to_prune:
-            prune.remove(module, param)
+                torch.save(model.state_dict(), os.path.join(workdir, "weights_prune_%s.tar" % pruning_iter))
 
-        # prep_for_save() follows this: https://github.com/pytorch/pytorch/issues/33618
-        model.prep_for_save()
+            # Making pruned parameterisation permanent
+            for module, param in parameters_to_prune:
+                prune.remove(module, param)
 
-        torch.save(model.state_dict(), os.path.join(workdir, "weights_final.tar"))
-        print("After pruning, model has %d params\n" % get_parameters_count(model))
+            # prep_for_save() follows this: https://github.com/pytorch/pytorch/issues/33618
+            model.prep_for_save()
 
-        # Sparsifying
-        model_state = model.state_dict()
-        for param_tensor in model_state:
-            model_state[param_tensor] = model_state[param_tensor].to_sparse()
-        torch.save(model_state, os.path.join(workdir, "weights_final_sparse.tar"))
+            torch.save(model.state_dict(), os.path.join(workdir, "weights_final.tar"))
+            print("After pruning, model has %d params\n" % get_parameters_count(model))
+
+            # Sparsifying
+            model_state = model.state_dict()
+            for param_tensor in model_state:
+                model_state[param_tensor] = model_state[param_tensor].to_sparse()
+            torch.save(model_state, os.path.join(workdir, "weights_final_sparse.tar"))
+
+
    
 
 
@@ -237,4 +247,5 @@ def argparser():
     parser.add_argument("--structured", action="store_true", default=False)
     parser.add_argument("--pruning_iterations", default=1, type=int)
     parser.add_argument("--quantize", action="store_true", default=False)
+    parser.add_argument("--profile", action="store_true", default=False)
     return parser

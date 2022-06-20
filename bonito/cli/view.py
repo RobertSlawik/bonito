@@ -5,6 +5,7 @@ Bonito model viewer - display a model architecture for a given config.
 import toml
 import argparse
 from bonito.util import load_symbol
+from torchinfo import summary
 
 
 def main(args):
@@ -13,6 +14,7 @@ def main(args):
     model = Model(config)
     print(model)
     print("Total parameters in model", sum(p.numel() for p in model.parameters()))
+    summary(model)
 
 
 def argparser():
